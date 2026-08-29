@@ -25,6 +25,7 @@ import {
   parsePolicyConfig,
   parsePolicyMutationInput,
 } from "./policySettings";
+import { canChangeModelRollout, isValidModelDeploymentState, modelDeploymentState, parseModelRolloutInput } from "./modelRollout";
 
 initializeApp();
 
@@ -443,5 +444,61 @@ export const mutatePolicySettings = onCall(async (request) => {
     actorUid: request.auth.uid,
     version: result.version,
   });
+  return { ok: true, correlationId, ...result };
+});
+
+/** Super-admin-only rollout-mode mutation. Model identity and rollback target are server-owned. */
+export const changeModelRollout = onCall(async (request) => {
+  if (!request.auth?.uid || !canChangeModelRollout(request.auth.token)) {
+    throw new HttpsError("permission-denied", "The superAdmin role is required.");
+  }
+  const input = parseModelRolloutInput(request.data);
+  if (!input) throw new HttpsError("invalid-argument", "Invalid rollout-mode change.");
+
+  const db = getFirestore();
+  const deploymentRef = db.collection("modelDeployments").doc("current");
+  const auditRef = db.collection("auditLogs").doc(randomUUID());
+  const correlationId = randomUUID();
+
+  const result = await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(deploymentRef);
+    if (!snapshot.exists) throw new HttpsError("failed-precondition", "No deployed model is configured.");
+    const current = snapshot.data() ?? {};
+    const before = modelDeploymentState(current);
+    if (!isValidModelDeploymentState(before)) {
+      throw new HttpsError("failed-precondition", "The deployed model state is invalid.");
+    }
+    if (before.stateVersion !== input.expectedVersion) {
+      throw new HttpsError("aborted", "Model rollout state changed. Reload before updating.");
+    }
+    if (before.rolloutMode === input.mode && before.rolloutPercentage === input.percentage) {
+      throw new HttpsError("failed-precondition", "The requested rollout mode is already active.");
+    }
+
+    const nextVersion = before.stateVersion + 1;
+    const after = { ...before, rolloutMode: input.mode, rolloutPercentage: input.percentage, stateVersion: nextVersion };
+    transaction.update(deploymentRef, {
+      rolloutMode: input.mode,
+      rolloutPercentage: input.percentage,
+      stateVersion: nextVersion,
+      lastCorrelationId: correlationId,
+      updatedBy: request.auth!.uid,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    transaction.create(auditRef, {
+      correlationId,
+      actorUid: request.auth!.uid,
+      actorEmail: typeof request.auth!.token.email === "string" ? request.auth!.token.email : null,
+      actorRole: "superAdmin",
+      action: "change_model_rollout_mode",
+      reason: input.reason,
+      before,
+      after,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    return { stateVersion: nextVersion, rolloutMode: input.mode, rolloutPercentage: input.percentage, rollbackTarget: before.rollbackTarget };
+  });
+
+  logger.info("model-rollout-mode-changed", { correlationId, actorUid: request.auth.uid, ...result });
   return { ok: true, correlationId, ...result };
 });

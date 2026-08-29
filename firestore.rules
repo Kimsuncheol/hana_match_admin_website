@@ -66,6 +66,20 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Model telemetry may contain provider/internal fields. Only aggregate
+    // server DTOs are exposed; rollout changes use an audited callable.
+    match /moderationReviewOutcomes/{outcomeId} {
+      allow read, write: if false;
+    }
+
+    match /aiLatencyLogs/{logId} {
+      allow read, write: if false;
+    }
+
+    match /modelDeployments/{deploymentId} {
+      allow read, write: if false;
+    }
+
     match /{document=**} {
       // Fail closed for any collection not explicitly listed above. Firestore
       // combines overlapping match statements with OR, so a broad admin read

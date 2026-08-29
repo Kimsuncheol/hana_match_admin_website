@@ -172,6 +172,38 @@ explicit environment variables are present. Seed an emulator user with
 contract tests cover denied roles, unsupported client fields, validation,
 and rollback inputs without requiring production credentials.
 
+## Multilingual model health
+
+`/model-health` is available to `admin` and `superAdmin`; moderators are
+rejected by `GET /api/admin/model-health` before telemetry is queried. The
+endpoint reads bounded windows from `moderationReviewOutcomes` (30 days),
+`aiLatencyLogs` (24 hours), and `modelDeployments/current`, then returns only
+Korean/Japanese/mixed-language agreement aggregates, median latency, override
+rate, failure count, sample counts, deployed version, rollout mode, and the
+rollback target. Raw prompts, provider responses, model configuration, and
+individual review records are never copied into the DTO.
+
+The page includes a text-labelled bar chart with a screen-reader table using
+the same query-backed values. Empty datasets remain explicit rather than
+inventing percentages. Only an exact `superAdmin` can use the
+`changeModelRollout` callable. It accepts only mode, percentage, expected state
+version, and a required reason; model version and rollback target remain
+server-owned. Every successful change atomically updates the deployment and
+creates an immutable audit record with before/after state and correlation ID.
+
+Expected ingestion fields:
+
+- `moderationReviewOutcomes`: `languageGroup` (`ko`, `ja`, or `mixed`),
+  `humanAgreedWithAi`, `overridden`, `reviewedAt`.
+- `aiLatencyLogs`: `latencyMs`, `success`, `recordedAt`. Additional internal
+  fields are ignored by the aggregate mapper.
+- `modelDeployments/current`: `modelVersion`, `rolloutMode`,
+  `rolloutPercentage`, `rollbackTarget`, `stateVersion`, `updatedAt`.
+
+Deploy the new callable with
+`firebase deploy --only functions:changeModelRollout` after merging the
+reference Firestore rules into the live ruleset.
+
 ## Deploy on Vercel
 
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
