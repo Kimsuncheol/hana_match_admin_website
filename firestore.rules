@@ -2,11 +2,9 @@
 //
 // hana-match's Firestore already serves an existing app under its own
 // rules (currently: any signed-in user may read/write everything). This
-// file's blanket `isAdmin()` gate on {document=**} would replace that
-// entirely, so it must not be pushed with `firebase deploy --only
-// firestore:rules` as-is — merge just the adminProfiles block into the
-// project's real rules instead, or scope the wildcard match down to only
-// the collections this admin site actually owns.
+// reference defines the collections owned by the admin site; merge these
+// collection blocks into the live ruleset rather than deploying this file
+// wholesale.
 //
 // adminProfiles itself is safe regardless: it's only ever written by the
 // Admin SDK (lib/firebase-admin/assign-role.ts), which bypasses rules
@@ -30,8 +28,37 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // All moderation writes go through the privileged `moderateCase`
+    // Cloud Function. Admin SDK writes bypass rules; browser writes do not.
+    match /moderationCases/{caseId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Immutable from every client, including an authenticated admin.
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /humanReviewRequests/{requestId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /moderationEffects/{effectId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /userModerationStates/{uid} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     match /{document=**} {
-      allow read, write: if isAdmin();
+      allow read: if isAdmin();
+      allow write: if false;
     }
   }
 }

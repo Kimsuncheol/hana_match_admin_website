@@ -3,7 +3,15 @@ import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { beforeUserCreated } from "firebase-functions/v2/identity";
 import { defineString } from "firebase-functions/params";
 import { logger } from "firebase-functions";
+import { HttpsError, onCall } from "firebase-functions/v2/https";
+import { randomUUID } from "node:crypto";
 import { resolveAdminAssignment } from "./adminAssignment";
+import {
+  isDecisionAction,
+  moderationState,
+  parseModerationActionInput,
+  transitionPatch,
+} from "./moderationActions";
 
 initializeApp();
 
@@ -59,5 +67,141 @@ export const assignDefaultAdminRole = beforeUserCreated(async (event) => {
       admin: decision.admin,
       role: decision.role,
     },
+  };
+});
+
+/**
+ * The sole write path for case decisions and user-impacting moderation
+ * actions. The client cannot submit arbitrary state: it chooses one
+ * allowlisted action, while this function derives the transition, actor,
+ * correlation id, before/after snapshots, and audit record.
+ */
+export const moderateCase = onCall(async (request) => {
+  const token = request.auth?.token;
+  const actorUid = request.auth?.uid;
+  const role = token?.role;
+  if (!actorUid || token?.admin !== true || (role !== "admin" && role !== "moderator")) {
+    throw new HttpsError("permission-denied", "An admin-console role is required.");
+  }
+
+  const input = parseModerationActionInput(request.data);
+  if (!input) throw new HttpsError("invalid-argument", "Invalid moderation action.");
+
+  const db = getFirestore();
+  const caseRef = db.collection("moderationCases").doc(input.caseId);
+  const auditRef = db.collection("auditLogs").doc();
+  const correlationId = randomUUID();
+  const now = new Date();
+
+  const version = await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(caseRef);
+    if (!snapshot.exists) throw new HttpsError("not-found", "Case not found.");
+    const current = snapshot.data() ?? {};
+    const currentVersion = typeof current.version === "number" ? current.version : 0;
+
+    if (current.assignedToUid !== actorUid) {
+      throw new HttpsError("failed-precondition", "Assign this case to yourself before taking action.");
+    }
+    if (currentVersion !== input.expectedVersion) {
+      throw new HttpsError("aborted", "The case changed. Reload before taking action.");
+    }
+    const requiresOpenReview = isDecisionAction(input.action) || input.action === "request_permanent_suspension";
+    if (requiresOpenReview && current.status !== "open" && current.status !== "in_review") {
+      throw new HttpsError("failed-precondition", "This case is no longer reviewable.");
+    }
+    const pendingReview = current.permanentSuspensionReview as { status?: unknown } | undefined;
+    if (input.action === "request_permanent_suspension" && pendingReview?.status === "pending") {
+      throw new HttpsError("already-exists", "A permanent suspension review is already pending.");
+    }
+    if (input.action === "request_permanent_suspension" && typeof current.targetUid !== "string") {
+      throw new HttpsError("failed-precondition", "This case has no valid target user.");
+    }
+
+    const before = moderationState(current);
+    const patch = transitionPatch(current, input, actorUid, now);
+    const after = moderationState({ ...current, ...patch });
+
+    const isUserEffect = input.action === "warn_user" || input.action === "rate_limit_talk";
+    const targetUid = typeof current.targetUid === "string" ? current.targetUid : null;
+    let userModerationRef;
+    let userModerationData: Record<string, unknown> = {};
+    if (isUserEffect) {
+      if (!targetUid) throw new HttpsError("failed-precondition", "This case has no valid target user.");
+      userModerationRef = db.collection("userModerationStates").doc(targetUid);
+      const userModerationSnapshot = await transaction.get(userModerationRef);
+      userModerationData = userModerationSnapshot.data() ?? {};
+    }
+
+    transaction.update(caseRef, patch);
+    transaction.create(auditRef, {
+      correlationId,
+      caseId: input.caseId,
+      actorUid,
+      actorEmail: typeof token.email === "string" ? token.email : null,
+      actorRole: role,
+      action: input.action,
+      reason: input.reason,
+      before,
+      after,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+
+    if (isUserEffect && userModerationRef && targetUid) {
+      const talkRateLimitedUntil = input.action === "rate_limit_talk"
+        ? new Date(now.getTime() + 24 * 60 * 60 * 1000)
+        : userModerationData.talkRateLimitedUntil ?? null;
+      transaction.set(userModerationRef, {
+        warningCount: input.action === "warn_user"
+          ? (typeof userModerationData.warningCount === "number" ? userModerationData.warningCount : 0) + 1
+          : userModerationData.warningCount ?? 0,
+        talkRateLimitedUntil,
+        lastAction: input.action,
+        lastReason: input.reason,
+        lastCorrelationId: correlationId,
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+      const effectRef = db.collection("moderationEffects").doc();
+      transaction.create(effectRef, {
+        correlationId,
+        caseId: input.caseId,
+        targetUid,
+        type: input.action,
+        reason: input.reason,
+        status: "applied",
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    }
+
+    if (input.action === "request_permanent_suspension") {
+      const reviewRef = db.collection("humanReviewRequests").doc();
+      transaction.create(reviewRef, {
+        correlationId,
+        caseId: input.caseId,
+        targetUid: typeof current.targetUid === "string" ? current.targetUid : null,
+        requestedBy: actorUid,
+        reason: input.reason,
+        status: "pending",
+        requiredApprovals: 2,
+        approvals: [],
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    }
+
+    return currentVersion + 1;
+  });
+
+  logger.info("moderation-action-completed", {
+    correlationId,
+    caseId: input.caseId,
+    action: input.action,
+    actorUid,
+  });
+
+  return {
+    ok: true,
+    correlationId,
+    version,
+    humanReviewRequired: input.action === "request_permanent_suspension",
   };
 });

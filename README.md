@@ -91,6 +91,34 @@ collection, not just a client-side hidden field.
   `app/dashboard/dashboard-content.test.tsx` (client-side denial + 403
   handling).
 
+## Moderation case detail and actions
+
+`/moderation/cases/[caseId]` reads an allowlisted, server-masked detail DTO
+from `GET /api/admin/moderation/cases/[caseId]`. Raw evidence references and
+unmasked evidence never enter the browser response. AI labels, confidence,
+rules, and suggestions are displayed as review context only.
+
+All case decisions and user-impacting actions are submitted to the callable
+Cloud Function `moderateCase` in `functions/src/index.ts`. The function:
+
+- verifies the Firebase `admin` claim and `admin`/`moderator` role;
+- requires the case to be assigned to the caller and enforces an optimistic
+  `version` check;
+- accepts only a fixed action enum, reason, and (for corrections) label;
+- derives the transition server-side and atomically writes an immutable
+  `auditLogs` record with before/after state and a generated `correlationId`;
+- applies warnings and Talk rate limits to `userModerationStates`; and
+- turns permanent suspension into a `humanReviewRequests` item requiring two
+  approvals. It never directly sets a permanent-suspension state.
+
+The collection blocks in `firestore.rules` deny all browser writes to
+`moderationCases`, `auditLogs`, `humanReviewRequests`, `moderationEffects`, and
+`userModerationStates`. That file is still a reference: merge these blocks
+into the live hana-match ruleset before deployment. Deploy the callable with
+`firebase deploy --only functions:moderateCase` after configuring the Firebase
+project. This avoids deploying the optional Identity Platform blocking
+function unless that feature is enabled intentionally.
+
 ## Deploy on Vercel
 
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
