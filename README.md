@@ -51,6 +51,46 @@ switch to it later by following `functions/src/index.ts`.
 hana-match's Firestore already serves the existing app under its own rules.
 See the comment at the top of that file before deploying it.
 
+## Admin dashboard
+
+`/dashboard` (`app/dashboard/`). Server-authorized: the client never
+decides what data it's allowed to see — `app/api/admin/dashboard/route.ts`
+re-derives the caller's role from their verified ID token
+(`lib/firebase-admin/authorize.ts`) and shapes the response accordingly. A
+moderator's request never even triggers a read of the AI latency
+collection, not just a client-side hidden field.
+
+- **Metrics/queue/model-health aggregation** (pure, unit-tested):
+  `lib/dashboard/metrics.ts`, composed per-role in `lib/dashboard/build-payload.ts`
+- **Data model**: `moderationCases` and `aiLatencyLogs` Firestore collections,
+  documented as types in `lib/dashboard/types.ts`. This schema is new — the
+  app/AI pipeline doesn't write to it yet, so the dashboard will show its
+  empty state until that ingestion is built. Composite index for the cases
+  query lives in `firestore.indexes.json` (deployed).
+- **No raw evidence**: `CaseRecord` (the raw Firestore shape) may carry an
+  `evidenceRef` pointer; `buildPriorityQueue` in `metrics.ts` allowlists
+  the exact fields that reach the client, so evidence can't leak even if
+  the schema grows more evidence-adjacent fields later. Covered by a
+  regression test in `metrics.test.ts` and `build-payload.test.ts`.
+- **Roles**: `admin` (full dashboard) and `moderator` (open cases + hidden
+  content only, no SLA breach counts, no AI latency/model health). Both
+  carry the `admin: true` custom claim; `role` distinguishes them
+  (`lib/firebase/claims.ts` client-side, `lib/firebase-admin/authorize.ts`
+  server-side — an unrecognized/missing role string is treated as
+  moderator, never admin). There's no self-serve or admin-console path to
+  grant `moderator` yet; it's set via the Admin SDK out of band.
+- **Nav**: `components/nav/admin-nav.tsx` renders links per role and
+  collapses to a menu button on narrow viewports.
+- **Loading/error states**: `app/dashboard/dashboard-content.tsx` — skeleton
+  while loading, a distinct message for expired session (401) vs.
+  insufficient role (403) vs. network failure (retryable) in
+  `components/dashboard/error-state.tsx`.
+- **Unauthorized-access tests**: `lib/firebase-admin/authorize.test.ts`
+  (token/role matrix), `app/api/admin/dashboard/route.test.ts` (401/403 at
+  the route), `components/auth/protected-route.test.tsx` and
+  `app/dashboard/dashboard-content.test.tsx` (client-side denial + 403
+  handling).
+
 ## Deploy on Vercel
 
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.

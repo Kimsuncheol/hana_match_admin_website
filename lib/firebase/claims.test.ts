@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isAdminClaim } from "./claims";
+import { isAdminClaim, roleFromClaims } from "./claims";
 
 describe("isAdminClaim", () => {
   it("returns true only when admin is exactly true", () => {
@@ -22,5 +22,22 @@ describe("isAdminClaim", () => {
   it("rejects truthy-but-not-boolean-true values (no coercion)", () => {
     // @ts-expect-error deliberately passing a malformed claim shape
     expect(isAdminClaim({ admin: "true" })).toBe(false);
+  });
+});
+
+describe("roleFromClaims", () => {
+  it("returns null when there is no admin claim at all", () => {
+    expect(roleFromClaims({ admin: false, role: "admin" })).toBeNull();
+    expect(roleFromClaims({})).toBeNull();
+    expect(roleFromClaims(null)).toBeNull();
+  });
+
+  it("returns 'admin' only when role is exactly the string 'admin'", () => {
+    expect(roleFromClaims({ admin: true, role: "admin" })).toBe("admin");
+  });
+
+  it("falls back to 'moderator' for a missing or unrecognized role string, as long as admin is true", () => {
+    expect(roleFromClaims({ admin: true })).toBe("moderator");
+    expect(roleFromClaims({ admin: true, role: "superuser-typo" })).toBe("moderator");
   });
 });

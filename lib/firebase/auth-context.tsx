@@ -11,12 +11,13 @@ import {
 import type { User } from "firebase/auth";
 import { onIdTokenChanged, signOut as firebaseSignOut } from "firebase/auth";
 import { auth } from "./client";
-import { isAdminClaim, type AdminClaims } from "./claims";
+import { isAdminClaim, roleFromClaims, type AdminClaims, type AdminRole } from "./claims";
 
 type AuthState = {
   user: User | null;
   claims: AdminClaims | null;
   isAdmin: boolean;
+  role: AdminRole | null;
   loading: boolean;
   /** Forces a fresh ID token fetch so newly-granted claims are picked up without a re-login. */
   refreshClaims: () => Promise<AdminClaims | null>;
@@ -72,6 +73,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       user,
       claims,
       isAdmin: isAdminClaim(claims),
+      role: roleFromClaims(claims),
       loading,
       refreshClaims,
       signOut,
