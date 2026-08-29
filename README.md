@@ -119,6 +119,21 @@ into the live hana-match ruleset before deployment. Deploy the callable with
 project. This avoids deploying the optional Identity Platform blocking
 function unless that feature is enabled intentionally.
 
+## User operations
+
+`/users` provides exact email/UID search, Firebase verification and account
+status, trust/restriction flags, recent moderation history, and last activity.
+The protected `GET /api/admin/users` endpoint masks email, display name, and
+UID for display. Full admins receive limited case/reason context from audit
+history; moderators receive action/date summaries only and a read-only UI.
+
+All account mutations call the `administerUser` callable Cloud Function. It
+requires the full `admin` role, rejects arbitrary state fields, prevents
+self-disable, validates optimistic versions and reasons, and writes an
+`auditLogs` record with before/after state and a generated correlation ID.
+Deploy both moderation callables with
+`firebase deploy --only functions:moderateCase,functions:administerUser`.
+
 ## Deploy on Vercel
 
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.

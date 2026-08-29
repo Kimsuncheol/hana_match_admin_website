@@ -12,6 +12,7 @@ type NavLink = {
 const NAV_LINKS: NavLink[] = [
   { href: "/dashboard", label: "대시보드", roles: ["admin", "moderator"] },
   { href: "/moderation", label: "모더레이션 큐", roles: ["admin", "moderator"] },
+  { href: "/users", label: "사용자 운영", roles: ["admin", "moderator"] },
   { href: "/dashboard#model-health", label: "AI 모델 상태", roles: ["admin"] },
 ];
 

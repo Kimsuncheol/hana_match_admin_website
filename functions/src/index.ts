@@ -1,4 +1,5 @@
 import { initializeApp } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { beforeUserCreated } from "firebase-functions/v2/identity";
 import { defineString } from "firebase-functions/params";
@@ -12,6 +13,12 @@ import {
   parseModerationActionInput,
   transitionPatch,
 } from "./moderationActions";
+import {
+  canAdministerUsers,
+  parseUserOperationInput,
+  userOperationPatch,
+  userStateSnapshot,
+} from "./userOperations";
 
 initializeApp();
 
@@ -136,6 +143,7 @@ export const moderateCase = onCall(async (request) => {
     transaction.create(auditRef, {
       correlationId,
       caseId: input.caseId,
+      targetUid: typeof current.targetUid === "string" ? current.targetUid : null,
       actorUid,
       actorEmail: typeof token.email === "string" ? token.email : null,
       actorRole: role,
@@ -204,4 +212,72 @@ export const moderateCase = onCall(async (request) => {
     version,
     humanReviewRequired: input.action === "request_permanent_suspension",
   };
+});
+
+/** Full-admin-only account operations. No arbitrary account state is accepted. */
+export const administerUser = onCall(async (request) => {
+  if (!request.auth?.uid || !canAdministerUsers(request.auth.token)) {
+    throw new HttpsError("permission-denied", "The full admin role is required.");
+  }
+  const input = parseUserOperationInput(request.data);
+  if (!input) throw new HttpsError("invalid-argument", "Invalid user operation.");
+  if (input.userUid === request.auth.uid && input.action === "disable_account") {
+    throw new HttpsError("failed-precondition", "Administrators cannot disable their own account.");
+  }
+
+  const db = getFirestore();
+  const auth = getAuth();
+  const stateRef = db.collection("userModerationStates").doc(input.userUid);
+  const correlationId = randomUUID();
+  const now = new Date();
+  const [authUser, stateSnapshot] = await Promise.all([auth.getUser(input.userUid), stateRef.get()]);
+  const current = stateSnapshot.data() ?? {};
+  const currentVersion = typeof current.version === "number" ? current.version : 0;
+  if (currentVersion !== input.expectedVersion) {
+    throw new HttpsError("aborted", "The user state changed. Reload before taking action.");
+  }
+
+  if (input.action === "disable_account") await auth.updateUser(input.userUid, { disabled: true });
+  if (input.action === "enable_account") await auth.updateUser(input.userUid, { disabled: false });
+
+  const nextVersion = await db.runTransaction(async (transaction) => {
+    const freshSnapshot = await transaction.get(stateRef);
+    const fresh = freshSnapshot.data() ?? {};
+    const freshVersion = typeof fresh.version === "number" ? fresh.version : 0;
+    if (freshVersion !== input.expectedVersion) {
+      throw new HttpsError("aborted", "The user state changed. Reload before taking action.");
+    }
+    const patch = userOperationPatch(fresh, input, request.auth!.uid, now);
+    const before = userStateSnapshot(authUser.disabled, fresh);
+    const afterAuthDisabled = input.action === "disable_account"
+      ? true
+      : input.action === "enable_account"
+        ? false
+        : authUser.disabled;
+    const after = userStateSnapshot(afterAuthDisabled, { ...fresh, ...patch });
+    const auditRef = db.collection("auditLogs").doc();
+
+    transaction.set(stateRef, patch, { merge: true });
+    transaction.create(auditRef, {
+      correlationId,
+      targetUid: input.userUid,
+      actorUid: request.auth!.uid,
+      actorEmail: typeof request.auth!.token.email === "string" ? request.auth!.token.email : null,
+      actorRole: "admin",
+      action: input.action,
+      reason: input.reason,
+      before,
+      after,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    return Number(patch.version);
+  });
+
+  logger.info("user-operation-completed", {
+    correlationId,
+    targetUid: input.userUid,
+    action: input.action,
+    actorUid: request.auth.uid,
+  });
+  return { ok: true, correlationId, version: nextVersion };
 });
