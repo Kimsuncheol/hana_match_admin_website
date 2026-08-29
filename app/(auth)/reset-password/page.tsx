@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { FirebaseError } from "firebase/app";
 import { sendPasswordResetEmail } from "firebase/auth";
-import { auth } from "@/lib/firebase/client";
+import { getFirebaseAuth } from "@/lib/firebase/client";
 import { AuthCard } from "@/components/auth/auth-card";
 import { FormField } from "@/components/auth/form-field";
 
@@ -19,7 +19,7 @@ export default function ResetPasswordPage() {
     setError(null);
     setSubmitting(true);
     try {
-      await sendPasswordResetEmail(auth, email);
+      await sendPasswordResetEmail(getFirebaseAuth(), email);
       setSent(true);
     } catch (err) {
       // Avoid leaking whether an email exists: only surface a real client

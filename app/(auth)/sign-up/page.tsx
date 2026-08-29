@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createUserWithEmailAndPassword, sendEmailVerification } from "firebase/auth";
-import { auth } from "@/lib/firebase/client";
+import { getFirebaseAuth } from "@/lib/firebase/client";
 import { getAuthErrorMessage } from "@/lib/firebase/auth-errors";
 import { requestDefaultRoleAssignment } from "@/lib/firebase/assign-role-client";
 import { AuthCard } from "@/components/auth/auth-card";
@@ -35,7 +35,7 @@ export default function SignUpPage() {
 
     setSubmitting(true);
     try {
-      const credential = await createUserWithEmailAndPassword(auth, email, password);
+      const credential = await createUserWithEmailAndPassword(getFirebaseAuth(), email, password);
       await sendEmailVerification(credential.user).catch(() => {
         // Non-fatal: account creation already succeeded.
       });

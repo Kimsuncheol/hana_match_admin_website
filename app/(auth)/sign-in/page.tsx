@@ -4,7 +4,7 @@ import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { signInWithEmailAndPassword } from "firebase/auth";
-import { auth } from "@/lib/firebase/client";
+import { getFirebaseAuth } from "@/lib/firebase/client";
 import { getAuthErrorMessage } from "@/lib/firebase/auth-errors";
 import { AuthCard } from "@/components/auth/auth-card";
 import { FormField } from "@/components/auth/form-field";
@@ -31,7 +31,7 @@ function SignInForm() {
     setError(null);
     setSubmitting(true);
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      await signInWithEmailAndPassword(getFirebaseAuth(), email, password);
       router.push("/dashboard");
     } catch (err) {
       setError(getAuthErrorMessage(err));

@@ -10,7 +10,7 @@ import {
 } from "react";
 import type { User } from "firebase/auth";
 import { onIdTokenChanged, signOut as firebaseSignOut } from "firebase/auth";
-import { auth } from "./client";
+import { getFirebaseAuth } from "./client";
 import { isAdminClaim, roleFromClaims, type AdminClaims, type AdminRole } from "./claims";
 
 type AuthState = {
@@ -32,7 +32,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const refreshClaims = useCallback(async () => {
-    const current = auth.currentUser;
+    const current = getFirebaseAuth().currentUser;
     if (!current) {
       setClaims(null);
       return null;
@@ -47,7 +47,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    const unsubscribe = onIdTokenChanged(auth, async (nextUser) => {
+    const unsubscribe = onIdTokenChanged(getFirebaseAuth(), async (nextUser) => {
       setUser(nextUser);
       if (!nextUser) {
         setClaims(null);
@@ -65,7 +65,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
-    await firebaseSignOut(auth);
+    await firebaseSignOut(getFirebaseAuth());
   }, []);
 
   const value = useMemo<AuthState>(
