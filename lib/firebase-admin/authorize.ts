@@ -26,6 +26,10 @@ export interface IdTokenVerifier {
 
 function toRole(claims: { admin?: boolean; role?: string }): AdminRole | null {
   if (claims.admin !== true) return null;
+  // Existing operational APIs treat the explicitly higher-privileged role
+  // as full admin. The policy callables still check for the exact
+  // `superAdmin` claim independently.
+  if (claims.role === "superAdmin") return "admin";
   // Any admin-claimed account with an unrecognized/missing role string is
   // treated as the least-privileged admin-console role, not full admin —
   // an unexpected claim shape should never silently grant more access.

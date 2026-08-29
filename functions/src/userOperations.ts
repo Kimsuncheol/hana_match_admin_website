@@ -23,7 +23,7 @@ const ALLOWED_KEYS = new Set(["userUid", "action", "reason", "expectedVersion", 
 const UID_PATTERN = /^[A-Za-z0-9:_-]{3,128}$/;
 
 export function canAdministerUsers(token: Record<string, unknown> | undefined): boolean {
-  return token?.admin === true && token.role === "admin";
+  return token?.admin === true && (token.role === "admin" || token.role === "superAdmin");
 }
 
 export function parseUserOperationInput(value: unknown): UserOperationInput | null {
@@ -90,4 +90,3 @@ export function userOperationPatch(
   if (input.action === "add_trust_flag" || input.action === "remove_trust_flag") patch.trustFlags = Array.from(flags).sort();
   return patch;
 }
-

@@ -36,6 +36,10 @@ describe("roleFromClaims", () => {
     expect(roleFromClaims({ admin: true, role: "admin" })).toBe("admin");
   });
 
+  it("returns the explicit superAdmin role without widening unknown roles", () => {
+    expect(roleFromClaims({ admin: true, role: "superAdmin" })).toBe("superAdmin");
+  });
+
   it("falls back to 'moderator' for a missing or unrecognized role string, as long as admin is true", () => {
     expect(roleFromClaims({ admin: true })).toBe("moderator");
     expect(roleFromClaims({ admin: true, role: "superuser-typo" })).toBe("moderator");

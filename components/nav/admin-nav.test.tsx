@@ -15,6 +15,13 @@ describe("AdminNav", () => {
     expect(screen.getAllByText("모더레이션 큐").length).toBeGreaterThan(0);
   });
 
+  it("shows policy settings only for a super admin", () => {
+    const { rerender } = render(<AdminNav role="superAdmin" email="root@hanamatch.com" onSignOut={vi.fn()} />);
+    expect(screen.getAllByText("정책 설정").length).toBeGreaterThan(0);
+    rerender(<AdminNav role="admin" email="boss@hanamatch.com" onSignOut={vi.fn()} />);
+    expect(screen.queryByText("정책 설정")).not.toBeInTheDocument();
+  });
+
   it("calls onSignOut when the sign-out button is clicked", () => {
     const onSignOut = vi.fn();
     render(<AdminNav role="admin" email="boss@hanamatch.com" onSignOut={onSignOut} />);

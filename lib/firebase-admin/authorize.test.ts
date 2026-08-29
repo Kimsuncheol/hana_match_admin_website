@@ -56,6 +56,12 @@ describe("authorizeRequest", () => {
     expect(result).toEqual({ ok: true, uid: "u1", email: "boss@hanamatch.com", role: "admin" });
   });
 
+  it("treats an explicit superAdmin as full admin on existing operational APIs", async () => {
+    const verifier = fakeVerifier({ "tok-1": { uid: "root", admin: true, role: "superAdmin" } });
+    const result = await authorizeRequest(requestWith("Bearer tok-1"), verifier, ["admin"]);
+    expect(result).toMatchObject({ ok: true, uid: "root", role: "admin" });
+  });
+
   it("treats an admin-claimed token with an unrecognized role string as moderator (least privilege), never as admin", async () => {
     const verifier = fakeVerifier({ "tok-1": { uid: "u1", admin: true, role: "superuser-typo" } });
     const adminOnly = await authorizeRequest(requestWith("Bearer tok-1"), verifier, ["admin"]);

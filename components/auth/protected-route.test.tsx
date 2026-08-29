@@ -115,4 +115,22 @@ describe("ProtectedRoute", () => {
     await waitFor(() => expect(refreshClaims).toHaveBeenCalled());
     expect(await screen.findByText("shared section")).toBeInTheDocument();
   });
+
+  it("allows only an explicit superAdmin claim on a superAdmin-only route", async () => {
+    const refreshClaims = vi.fn().mockResolvedValue({ admin: true, role: "superAdmin" });
+    useAuthMock.mockReturnValue({
+      user: { uid: "root", email: "root@hanamatch.com" },
+      role: "superAdmin",
+      loading: false,
+      refreshClaims,
+    });
+
+    render(
+      <ProtectedRoute allowedRoles={["superAdmin"]}>
+        <div>policy settings</div>
+      </ProtectedRoute>,
+    );
+
+    expect(await screen.findByText("policy settings")).toBeInTheDocument();
+  });
 });

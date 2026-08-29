@@ -134,6 +134,44 @@ self-disable, validates optimistic versions and reasons, and writes an
 Deploy both moderation callables with
 `firebase deploy --only functions:moderateCase,functions:administerUser`.
 
+## Super-admin policy settings
+
+`/settings/policy` is gated to the exact `admin: true`, `role: "superAdmin"`
+custom-claim combination. The UI never reads Firestore directly. The
+`getPolicySettings` callable returns the current allowlisted configuration and
+limited version metadata; `mutatePolicySettings` is the only write path.
+
+Every publish and rollback:
+
+- validates the complete runtime shape and cross-field invariants again in the
+  Cloud Function;
+- requires a 10–500 character reason and an optimistic `expectedVersion`;
+- creates a new immutable `policyVersions` document instead of modifying an
+  existing version;
+- creates an immutable `auditLogs` document with actor, reason, before/after,
+  correlation ID, and rollback provenance; and
+- returns the new version ID plus its server-derived `rollbackTargetId`.
+
+A rollback copies a validated prior version into a new head, preserving both
+the prior history and a path to undo the rollback. Browser reads and writes to
+`policySettings` and `policyVersions` are denied by the reference
+`firestore.rules`; merge and deploy those rules deliberately with the live
+application rules.
+
+For local testing, copy the two non-secret entries from
+`firebase-emulator.env.example` into `.env.local`, then run:
+
+```bash
+firebase emulators:start --only auth,firestore,functions
+```
+
+The browser clients connect to Auth and Functions emulators only when those
+explicit environment variables are present. Seed an emulator user with
+`{ admin: true, role: "superAdmin" }` claims, and deploy/test the callables with
+`npm --prefix functions test` and `npm --prefix functions run build`. The pure
+contract tests cover denied roles, unsupported client fields, validation,
+and rollback inputs without requiring production credentials.
+
 ## Deploy on Vercel
 
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.

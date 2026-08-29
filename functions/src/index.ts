@@ -19,6 +19,12 @@ import {
   userOperationPatch,
   userStateSnapshot,
 } from "./userOperations";
+import {
+  canManagePolicy,
+  DEFAULT_POLICY_CONFIG,
+  parsePolicyConfig,
+  parsePolicyMutationInput,
+} from "./policySettings";
 
 initializeApp();
 
@@ -87,7 +93,7 @@ export const moderateCase = onCall(async (request) => {
   const token = request.auth?.token;
   const actorUid = request.auth?.uid;
   const role = token?.role;
-  if (!actorUid || token?.admin !== true || (role !== "admin" && role !== "moderator")) {
+  if (!actorUid || token?.admin !== true || (role !== "superAdmin" && role !== "admin" && role !== "moderator")) {
     throw new HttpsError("permission-denied", "An admin-console role is required.");
   }
 
@@ -263,7 +269,7 @@ export const administerUser = onCall(async (request) => {
       targetUid: input.userUid,
       actorUid: request.auth!.uid,
       actorEmail: typeof request.auth!.token.email === "string" ? request.auth!.token.email : null,
-      actorRole: "admin",
+      actorRole: request.auth!.token.role === "superAdmin" ? "superAdmin" : "admin",
       action: input.action,
       reason: input.reason,
       before,
@@ -280,4 +286,162 @@ export const administerUser = onCall(async (request) => {
     actorUid: request.auth.uid,
   });
   return { ok: true, correlationId, version: nextVersion };
+});
+
+/**
+ * Super-admin-only read path for policy state. Firestore is never queried
+ * by the browser, and only the constrained policy DTO and rollback metadata
+ * are returned.
+ */
+export const getPolicySettings = onCall(async (request) => {
+  if (!request.auth?.uid || !canManagePolicy(request.auth.token)) {
+    throw new HttpsError("permission-denied", "The superAdmin role is required.");
+  }
+  if (!request.data || typeof request.data !== "object" || Array.isArray(request.data) || Object.keys(request.data).length !== 0) {
+    throw new HttpsError("invalid-argument", "Policy reads do not accept query fields.");
+  }
+
+  const db = getFirestore();
+  const [currentSnapshot, historySnapshot] = await Promise.all([
+    db.collection("policySettings").doc("current").get(),
+    db.collection("policyVersions").orderBy("version", "desc").limit(20).get(),
+  ]);
+
+  if (!currentSnapshot.exists) {
+    return { current: { version: 0, versionId: null, config: DEFAULT_POLICY_CONFIG, updatedAt: null }, versions: [] };
+  }
+
+  const current = currentSnapshot.data() ?? {};
+  const currentConfig = parsePolicyConfig(current.config);
+  if (!currentConfig.ok || typeof current.version !== "number" || typeof current.versionId !== "string") {
+    logger.error("policy-current-invalid", { currentVersion: current.version ?? null });
+    throw new HttpsError("internal", "Stored policy state is invalid.");
+  }
+
+  const versions = historySnapshot.docs.flatMap((document) => {
+    const data = document.data();
+    if (typeof data.version !== "number" || typeof data.reason !== "string") return [];
+    return [{
+      versionId: document.id,
+      version: data.version,
+      reason: data.reason,
+      operation: data.operation === "rollback" ? "rollback" : "publish",
+      createdAt: typeof data.createdAt?.toDate === "function" ? data.createdAt.toDate().toISOString() : null,
+      rollbackTargetId: typeof data.rollbackTargetId === "string" ? data.rollbackTargetId : null,
+    }];
+  });
+
+  return {
+    current: {
+      version: current.version,
+      versionId: current.versionId,
+      config: currentConfig.value,
+      updatedAt: typeof current.updatedAt?.toDate === "function" ? current.updatedAt.toDate().toISOString() : null,
+    },
+    versions,
+  };
+});
+
+/**
+ * Publishes a new immutable version or rolls back by copying an immutable
+ * prior version into a new head. Client input never controls actor/audit
+ * metadata or arbitrary document fields.
+ */
+export const mutatePolicySettings = onCall(async (request) => {
+  if (!request.auth?.uid || !canManagePolicy(request.auth.token)) {
+    throw new HttpsError("permission-denied", "The superAdmin role is required.");
+  }
+  const parsed = parsePolicyMutationInput(request.data);
+  if (!parsed.ok) throw new HttpsError("invalid-argument", parsed.issues.join(" "));
+
+  const input = parsed.value;
+  const db = getFirestore();
+  const currentRef = db.collection("policySettings").doc("current");
+  const versionRef = db.collection("policyVersions").doc(randomUUID());
+  const auditRef = db.collection("auditLogs").doc(randomUUID());
+  const correlationId = randomUUID();
+
+  const result = await db.runTransaction(async (transaction) => {
+    const currentSnapshot = await transaction.get(currentRef);
+    const current = currentSnapshot.data() ?? {};
+    const currentVersion = typeof current.version === "number" ? current.version : 0;
+    const currentVersionId = typeof current.versionId === "string" ? current.versionId : null;
+    if (currentSnapshot.exists && (!currentVersionId || !parsePolicyConfig(current.config).ok)) {
+      throw new HttpsError("failed-precondition", "Current policy state is invalid.");
+    }
+    if (currentVersion !== input.expectedVersion) {
+      throw new HttpsError("aborted", "Policy state changed. Reload before publishing.");
+    }
+
+    let nextConfig;
+    let sourceVersionId: string | null = null;
+    if (input.operation === "publish") {
+      nextConfig = input.config;
+    } else {
+      if (input.targetVersionId === currentVersionId) {
+        throw new HttpsError("failed-precondition", "The current version cannot be its own rollback target.");
+      }
+      const targetRef = db.collection("policyVersions").doc(input.targetVersionId);
+      const targetSnapshot = await transaction.get(targetRef);
+      if (!targetSnapshot.exists) throw new HttpsError("not-found", "Rollback target not found.");
+      const targetData = targetSnapshot.data() ?? {};
+      const targetConfig = parsePolicyConfig(targetData.config);
+      if (!targetConfig.ok || typeof targetData.version !== "number" || targetData.version >= currentVersion) {
+        throw new HttpsError("failed-precondition", "Rollback target is invalid or not older than the current policy.");
+      }
+      nextConfig = targetConfig.value;
+      sourceVersionId = input.targetVersionId;
+    }
+
+    const nextVersion = currentVersion + 1;
+    const before = currentSnapshot.exists
+      ? { version: currentVersion, versionId: currentVersionId, config: current.config ?? null }
+      : null;
+    const after = { version: nextVersion, versionId: versionRef.id, config: nextConfig };
+    const versionDocument = {
+      ...after,
+      operation: input.operation,
+      reason: input.reason,
+      rollbackTargetId: currentVersionId,
+      sourceVersionId,
+      correlationId,
+      createdBy: request.auth!.uid,
+      createdAt: FieldValue.serverTimestamp(),
+    };
+
+    transaction.create(versionRef, versionDocument);
+    transaction.set(currentRef, {
+      ...after,
+      rollbackTargetId: currentVersionId,
+      correlationId,
+      updatedBy: request.auth!.uid,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    transaction.create(auditRef, {
+      correlationId,
+      actorUid: request.auth!.uid,
+      actorEmail: typeof request.auth!.token.email === "string" ? request.auth!.token.email : null,
+      actorRole: "superAdmin",
+      action: input.operation === "rollback" ? "rollback_policy_settings" : "publish_policy_settings",
+      reason: input.reason,
+      before,
+      after,
+      rollbackPath: {
+        rollbackTargetId: currentVersionId,
+        sourceVersionId,
+        publishedVersionId: versionRef.id,
+      },
+      createdAt: FieldValue.serverTimestamp(),
+    });
+
+    return { version: nextVersion, versionId: versionRef.id, rollbackTargetId: currentVersionId };
+  });
+
+  logger.info("policy-settings-mutated", {
+    correlationId,
+    operation: input.operation,
+    actorUid: request.auth.uid,
+    version: result.version,
+  });
+  return { ok: true, correlationId, ...result };
 });

@@ -5,11 +5,11 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/firebase/auth-context";
 import type { AdminRole } from "@/lib/firebase/claims";
 
-const ANY_ADMIN_ROLE: readonly AdminRole[] = ["admin", "moderator"];
+const ANY_ADMIN_ROLE: readonly AdminRole[] = ["superAdmin", "admin", "moderator"];
 
 type Props = {
   children: React.ReactNode;
-  /** Roles allowed to view this route. Defaults to any admin-console role (admin or moderator). */
+  /** Roles allowed to view this route. Defaults to any explicit admin-console role. */
   allowedRoles?: readonly AdminRole[];
 };
 

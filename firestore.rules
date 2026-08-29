@@ -56,9 +56,21 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Policy reads and writes must use superAdmin-authorized callable
+    // functions. Versions and audit records are immutable to every client.
+    match /policySettings/{documentId} {
+      allow read, write: if false;
+    }
+
+    match /policyVersions/{versionId} {
+      allow read, write: if false;
+    }
+
     match /{document=**} {
-      allow read: if isAdmin();
-      allow write: if false;
+      // Fail closed for any collection not explicitly listed above. Firestore
+      // combines overlapping match statements with OR, so a broad admin read
+      // here would otherwise bypass the callable-only policy collection rule.
+      allow read, write: if false;
     }
   }
 }

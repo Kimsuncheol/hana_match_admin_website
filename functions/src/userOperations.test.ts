@@ -12,6 +12,7 @@ describe("privileged user operations", () => {
     expect(canAdministerUsers({ admin: false, role: "admin" })).toBe(false);
     expect(canAdministerUsers(undefined)).toBe(false);
     expect(canAdministerUsers({ admin: true, role: "admin" })).toBe(true);
+    expect(canAdministerUsers({ admin: true, role: "superAdmin" })).toBe(true);
   });
 
   it("denies arbitrary account-state fields from the client", () => {
@@ -69,4 +70,3 @@ describe("privileged user operations", () => {
     expect(JSON.stringify(snapshot)).not.toContain("secret");
   });
 });
-

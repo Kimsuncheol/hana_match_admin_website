@@ -3,7 +3,7 @@ export type AdminClaims = {
   role?: string;
 };
 
-export type AdminRole = "admin" | "moderator";
+export type AdminRole = "superAdmin" | "admin" | "moderator";
 
 /**
  * Source of truth for "is this user allowed into the admin console".
@@ -24,5 +24,6 @@ export function isAdminClaim(claims: AdminClaims | null | undefined): boolean {
  */
 export function roleFromClaims(claims: AdminClaims | null | undefined): AdminRole | null {
   if (claims?.admin !== true) return null;
+  if (claims.role === "superAdmin") return "superAdmin";
   return claims.role === "admin" ? "admin" : "moderator";
 }

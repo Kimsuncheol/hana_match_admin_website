@@ -10,13 +10,15 @@ type NavLink = {
 };
 
 const NAV_LINKS: NavLink[] = [
-  { href: "/dashboard", label: "대시보드", roles: ["admin", "moderator"] },
-  { href: "/moderation", label: "모더레이션 큐", roles: ["admin", "moderator"] },
-  { href: "/users", label: "사용자 운영", roles: ["admin", "moderator"] },
-  { href: "/dashboard#model-health", label: "AI 모델 상태", roles: ["admin"] },
+  { href: "/dashboard", label: "대시보드", roles: ["superAdmin", "admin", "moderator"] },
+  { href: "/moderation", label: "모더레이션 큐", roles: ["superAdmin", "admin", "moderator"] },
+  { href: "/users", label: "사용자 운영", roles: ["superAdmin", "admin", "moderator"] },
+  { href: "/dashboard#model-health", label: "AI 모델 상태", roles: ["superAdmin", "admin"] },
+  { href: "/settings/policy", label: "정책 설정", roles: ["superAdmin"] },
 ];
 
 const ROLE_LABELS: Record<AdminRole, string> = {
+  superAdmin: "슈퍼 관리자",
   admin: "관리자",
   moderator: "모더레이터",
 };
