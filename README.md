@@ -29,6 +29,28 @@ To learn more about Next.js, take a look at the following resources:
 
 You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
+## Admin authentication
+
+Wired to the `hana-match` Firebase project. Copy `.env.local.example` to
+`.env.local` and fill in the client config plus a service account (Project
+settings > Service accounts > Generate new private key).
+
+- Sign-up/sign-in/reset screens: `app/(auth)/`
+- Role assignment on sign-up (server-verified, never client-set):
+  `app/api/admin/assign-role/route.ts` → `lib/firebase-admin/assign-role.ts`
+- Route gating + forced claims refresh: `components/auth/protected-route.tsx`
+- Optional domain allowlist: `ADMIN_ALLOWED_EMAIL_DOMAINS` env var
+
+`functions/` holds an alternate implementation of the same role-assignment
+logic as an Identity Platform blocking function, which is more robust
+(claims are set before the account ever exists) but requires the project on
+the Blaze plan with Identity Platform enabled. Not currently deployed;
+switch to it later by following `functions/src/index.ts`.
+
+`firestore.rules` in the repo root is a **reference, not deployed** —
+hana-match's Firestore already serves the existing app under its own rules.
+See the comment at the top of that file before deploying it.
+
 ## Deploy on Vercel
 
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
